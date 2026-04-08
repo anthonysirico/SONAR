@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Node / pnpm
+node_modules/
+dist/
+.pnpm-store/
+
+# Vite
+frontend/dist/
+frontend/.vite/
+
+# Neo4j
+database/data/
+*.dump
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Testing
+coverage/
+.pytest_cache/
+htmlcov/
+
+# Uploads / temp data
+ingestion/uploads/
+ingestion/tmp/
+reports/tmp/
