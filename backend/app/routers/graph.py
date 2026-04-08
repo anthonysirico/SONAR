@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 from app.services.graph_service import get_full_graph, get_node_by_id, get_top_prominence
 from app.services.prominence import compute_all_prominence
+from app.services.detection import run_all_detections
 
 router = APIRouter()
 
@@ -19,3 +20,7 @@ async def node_detail(node_id: str):
 @router.post("/prominence/compute")
 async def run_prominence():
     return compute_all_prominence()
+
+@router.post("/detect")
+async def run_detection():
+    return run_all_detections()
