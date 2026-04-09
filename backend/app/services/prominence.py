@@ -36,8 +36,8 @@ def compute_all_prominence():
                 max(complaints) as max_complaints
         """).single()
 
-        max_degree    = max_vals["max_degree"] or 1
-        max_dollars   = max_vals["max_dollars"] or 1
+        max_degree     = max_vals["max_degree"] or 1
+        max_dollars    = max_vals["max_dollars"] or 1
         max_complaints = max_vals["max_complaints"] or 1
 
         # Get all nodes with their stats
@@ -49,28 +49,80 @@ def compute_all_prominence():
                  coalesce(n.total_obligated, 0) as dollars,
                  coalesce(n.complaint_appearances, 0) as complaints,
                  coalesce(n.exclusion_flag, false) as excluded,
-                 n.node_id as node_id
-            RETURN node_id, degree, dollars, complaints, excluded
+                 n.node_id as node_id,
+                 n.name as name
+            RETURN node_id, name, degree, dollars, complaints, excluded
         """)
 
         for record in nodes:
-            node_id    = record["node_id"]
+            node_id = record["node_id"]
             if not node_id:
                 continue
 
-            cd = normalize(record["degree"], max_degree)
-            wd = normalize(record["dollars"], max_dollars)
-            f  = normalize(record["complaints"], max_complaints)
-            x  = DELTA if record["excluded"] else 0.0
+            degree     = record["degree"]
+            dollars    = record["dollars"]
+            complaints = record["complaints"]
+            excluded   = record["excluded"]
+
+            cd = normalize(degree, max_degree)
+            wd = normalize(dollars, max_dollars)
+            f  = normalize(complaints, max_complaints)
+            x  = DELTA if excluded else 0.0
 
             W = normalize(wd, 1.0) + GAMMA * f + x
             W = min(W, 1.0)
 
             P = round(ALPHA * cd + BETA * W, 4)
 
+            # ─── Build explanation trail ─────────────────
+            factors = []
+
+            if degree > 0:
+                factors.append(
+                    f"Degree centrality: {degree} connection(s) "
+                    f"(normalized {cd:.2f}, weighted {ALPHA * cd:.3f})"
+                )
+
+            if dollars > 0:
+                factors.append(
+                    f"Financial weight: ${dollars:,.0f} obligated "
+                    f"(normalized {wd:.2f})"
+                )
+
+            if complaints > 0:
+                factors.append(
+                    f"Complaint appearances: {complaints} "
+                    f"(adds {GAMMA * f:.3f} to influence)"
+                )
+
+            if excluded:
+                factors.append(
+                    f"Exclusion flag active (adds {DELTA} to influence)"
+                )
+
+            if not factors:
+                factors.append("No significant activity detected")
+
+            # Tier label for the explanation header
+            if P >= 0.75:
+                tier = "CRITICAL"
+            elif P >= 0.50:
+                tier = "ELEVATED"
+            elif P >= 0.25:
+                tier = "WATCH"
+            else:
+                tier = "BASELINE"
+
+            factors.insert(0, f"{tier} — prominence score {P:.4f}")
+
             session.run("""
                 MATCH (n {node_id: $node_id})
-                SET n.prominence_score = $score
-            """, {"node_id": node_id, "score": P})
+                SET n.prominence_score = $score,
+                    n.prominence_factors = $factors
+            """, {
+                "node_id": node_id,
+                "score": P,
+                "factors": factors,
+            })
 
     return {"status": "Prominence scores updated"}
