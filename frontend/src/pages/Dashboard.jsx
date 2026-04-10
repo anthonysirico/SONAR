@@ -49,18 +49,22 @@ function transformGraphData(raw) {
     addNode(record.n)
     addNode(record.m)
 
-    const r = record.r
+    const rawR = record.r
+    // Neo4j returns relationships as [startNode, type, properties] arrays
+    const r = Array.isArray(rawR)
+      ? (rawR[2] && typeof rawR[2] === 'object' ? rawR[2] : {})
+      : (rawR || {})
+    const relType = Array.isArray(rawR) && typeof rawR[1] === 'string' ? rawR[1] : ''
     const n = record.n
     const m = record.m
 
-    if (r && n?.node_id && m?.node_id) {
-      const edgeId = `${n.node_id}-${m.node_id}-${JSON.stringify(r)}`
+    if (rawR && n?.node_id && m?.node_id) {
       elements.push({
         data: {
-          id: edgeId,
+          id: `${n.node_id}-${m.node_id}-${relType || elements.length}`,
           source: n.node_id,
           target: m.node_id,
-          label: '',
+          label: relType,
           confidence: r.confidence ?? 1,
           weight: r.weight ?? 1,
         },
