@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.database import db
-from app.routers import graph, ingest, reports, cases
+from app.routers import graph, ingest, reports, cases, sources
 
 app = FastAPI(
     title="SONAR",
@@ -21,6 +21,7 @@ app.include_router(graph.router, prefix="/api/graph", tags=["Graph"])
 app.include_router(cases.router, prefix="/api/cases", tags=["Cases"])
 app.include_router(ingest.router, prefix="/api/ingest", tags=["Ingest"])
 app.include_router(reports.router, prefix="/api/reports", tags=["Reports"])
+app.include_router(sources.router, prefix="/api/sources", tags=["Sources"])
 
 @app.on_event("startup")
 async def startup():

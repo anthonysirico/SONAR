@@ -2,14 +2,17 @@ import { useEffect, useState, useCallback } from 'react'
 import GraphCanvas from '../components/GraphCanvas'
 import TopBar from '../components/TopBar'
 import SearchPanel from '../components/SearchPanel'
+import CredentialModal from '../components/CredentialModal'
 import {
   fetchFullGraph,
   fetchCaseGraph,
   computeProminence,
   fetchCases,
   createCase,
-  searchUSASpending,
+  fetchSources,
+  searchSources,
   ingestAwards,
+  enrichCompany,
 } from '../services/api'
 
 // ─── Graph Transform ────────────────────────────────────────
@@ -84,6 +87,14 @@ export default function Dashboard() {
   const [searchOpen, setSearchOpen] = useState(false)
   const [searching, setSearching] = useState(false)
   const [ingesting, setIngesting] = useState(false)
+  const [enriching, setEnriching] = useState(false)
+
+  // Data sources state
+  const [sources, setSources] = useState([])
+  const [sourceCredentials, setSourceCredentials] = useState({})
+
+  // Credential modal state
+  const [credentialModal, setCredentialModal] = useState(null) // source object or null
 
   // ─── Load graph ───────────────────────────────────────────
 
@@ -104,15 +115,16 @@ export default function Dashboard() {
     setLoading(false)
   }, [activeCase])
 
-  // ─── Load cases on mount ──────────────────────────────────
+  // ─── Load cases and sources on mount ──────────────────────
 
   useEffect(() => {
     const init = async () => {
       try {
-        const c = await fetchCases()
+        const [c, s] = await Promise.all([fetchCases(), fetchSources()])
         setCases(c)
+        setSources(s)
       } catch (e) {
-        console.error('Failed to load cases:', e)
+        console.error('Failed to load initial data:', e)
       }
     }
     init()
@@ -155,11 +167,17 @@ export default function Dashboard() {
     setSearchOpen(true)
     setSearchResults(null)
     try {
-      const data = await searchUSASpending(activeCase.case_id, query, searchType)
+      const data = await searchSources(
+        activeCase.case_id,
+        query,
+        searchType,
+        25,
+        sourceCredentials
+      )
       setSearchResults(data)
     } catch (e) {
       flash(`Search error: ${e.message}`)
-      setSearchResults({ error: e.message, results: [] })
+      setSearchResults({ error: e.message, sources: {} })
     }
     setSearching(false)
   }
@@ -180,11 +198,49 @@ export default function Dashboard() {
     setIngesting(false)
   }
 
+  const handleEnrich = async (ueis) => {
+    if (!activeCase || ueis.length === 0) return
+    const samCreds = sourceCredentials.sam_gov
+    if (!samCreds?.api_key) {
+      flash('SAM.gov API key required for enrichment')
+      return
+    }
+    setEnriching(true)
+    let enrichedCount = 0
+    for (const uei of ueis) {
+      try {
+        await enrichCompany(activeCase.case_id, uei, samCreds)
+        enrichedCount++
+      } catch (e) {
+        console.error(`Enrich failed for UEI ${uei}:`, e)
+        flash(`Enrich error: ${e.message}`)
+      }
+    }
+    if (enrichedCount > 0) {
+      flash(`Enriched ${enrichedCount} company(s) with SAM.gov data`)
+      await loadGraph()
+    }
+    setEnriching(false)
+  }
+
   const handleCompute = async () => {
     flash('Recomputing...')
     await computeProminence()
     await loadGraph()
     flash('Done')
+  }
+
+  const handleSourceClick = (source) => {
+    setCredentialModal(source)
+  }
+
+  const handleCredentialSubmit = (sourceId, creds) => {
+    setSourceCredentials((prev) => ({
+      ...prev,
+      [sourceId]: creds,
+    }))
+    setCredentialModal(null)
+    flash(`${credentialModal?.name || 'Source'} connected`)
   }
 
   const flash = (msg) => {
@@ -204,6 +260,9 @@ export default function Dashboard() {
         onCreateCase={handleCreateCase}
         onSearch={handleSearch}
         onCompute={handleCompute}
+        sources={sources}
+        sourceCredentials={sourceCredentials}
+        onSourceClick={handleSourceClick}
       />
 
       {status && (
@@ -240,11 +299,22 @@ export default function Dashboard() {
           open={searchOpen}
           searching={searching}
           ingesting={ingesting}
+          enriching={enriching}
           results={searchResults}
           onIngest={handleIngest}
+          onEnrich={handleEnrich}
           onClose={() => setSearchOpen(false)}
         />
       </div>
+
+      {/* Credential Modal */}
+      {credentialModal && (
+        <CredentialModal
+          source={credentialModal}
+          onSubmit={handleCredentialSubmit}
+          onClose={() => setCredentialModal(null)}
+        />
+      )}
     </div>
   )
 }

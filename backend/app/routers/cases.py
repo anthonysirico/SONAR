@@ -1,22 +1,26 @@
 """
 SONAR — Cases Router
-Case management and data source search/ingest endpoints.
+Case management and multi-source data search/ingest endpoints.
 
 Workflow:
   1. POST /api/cases/              → create a case
-  2. POST /api/cases/{id}/search   → search USASpending, preview results
-  3. POST /api/cases/{id}/ingest   → pull award details, write to Neo4j
+  2. POST /api/cases/{id}/search   → search all sources, preview results
+  3. POST /api/cases/{id}/ingest   → pull USASpending award details, write to Neo4j
+  4. POST /api/cases/{id}/enrich   → enrich Company node with SAM.gov data
 """
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from typing import Optional
+import asyncio
 import logging
 
 from app.services import case_service
 from app.services import usaspending
+from app.services import sam_gov
 from app.services import graph_service
 from app.services import entity_resolution
+from app.services.source_registry import sources_for_search_type
 
 logger = logging.getLogger("sonar.cases")
 
@@ -36,6 +40,10 @@ class SearchRequest(BaseModel):
         description="keyword | piid"
     )
     limit: int = Field(default=25, ge=1, le=100)
+    credentials: dict = Field(
+        default={},
+        description="Source credentials, e.g. {'sam_gov': {'api_key': '...'}}"
+    )
 
 class IngestRequest(BaseModel):
     """Cherry-pick which search results to pull into the graph."""
@@ -43,6 +51,14 @@ class IngestRequest(BaseModel):
         ...,
         min_length=1,
         description="USASpending internal_id values from search results"
+    )
+
+class EnrichRequest(BaseModel):
+    """Enrich a Company node with SAM.gov entity data."""
+    uei: str = Field(..., min_length=1, description="UEI of the company to enrich")
+    credentials: dict = Field(
+        default={},
+        description="SAM.gov credentials: {'api_key': '...'}"
     )
 
 
@@ -88,43 +104,170 @@ async def get_case_graph(case_id: str):
     return {"case_id": case_id, "graph": graph}
 
 
-# ─── Search (preview, no write) ─────────────────────────────
+# ─── Multi-Source Search (preview, no write) ────────────────
 
 @router.post("/{case_id}/search")
-async def search_usaspending(case_id: str, body: SearchRequest):
+async def search_sources(case_id: str, body: SearchRequest):
     """
-    Search USASpending.gov and return preview results.
-    Nothing is written to Neo4j yet — the investigator reviews
-    and selects which awards to ingest.
+    Search all applicable data sources in parallel.
+    Sources are determined by search_type: keyword → both, piid → USASpending only.
+    Sources requiring credentials are skipped if credentials not provided.
+    Nothing is written to Neo4j — the investigator reviews results first.
     """
-    # Verify case exists
     case = case_service.get_case(case_id)
     if not case:
         raise HTTPException(404, "Case not found")
 
-    try:
-        if body.search_type == "piid":
-            raw = await usaspending.search_awards_by_piid(body.query, limit=body.limit)
+    applicable_sources = sources_for_search_type(body.search_type)
+    results = {}
+
+    # Build coroutines for each source
+    tasks = {}
+    for source in applicable_sources:
+        sid = source["id"]
+
+        if source["auth_required"]:
+            creds = body.credentials.get(sid, {})
+            if not creds:
+                results[sid] = {
+                    "status": "skipped",
+                    "reason": "No credentials provided",
+                    "source_name": source["name"],
+                    "results": [],
+                }
+                continue
         else:
-            raw = await usaspending.search_awards_by_keyword(body.query, limit=body.limit, page=1)
-    except Exception as e:
-        logger.error(f"USASpending search failed: {e}")
-        raise HTTPException(502, f"USASpending API error: {str(e)}")
+            creds = {}
 
-    results = raw.get("results", [])
-    page_meta = raw.get("page_metadata", {})
+        tasks[sid] = _search_source(sid, body.query, body.search_type, body.limit, creds, source["name"])
 
-    summaries = [usaspending.map_search_result_summary(r) for r in results]
+    # Execute all source queries in parallel
+    if tasks:
+        task_results = await asyncio.gather(
+            *tasks.values(),
+            return_exceptions=True,
+        )
+        for sid, result in zip(tasks.keys(), task_results):
+            if isinstance(result, Exception):
+                source_name = next(s["name"] for s in applicable_sources if s["id"] == sid)
+                logger.error(f"Source {sid} search failed: {result}")
+                results[sid] = {
+                    "status": "error",
+                    "error": str(result),
+                    "source_name": source_name,
+                    "results": [],
+                }
+            else:
+                results[sid] = result
 
     return {
         "case_id": case_id,
         "query": body.query,
         "search_type": body.search_type,
-        "result_count": len(summaries),
-        "total_available": page_meta.get("total", 0),
-        "has_next": page_meta.get("hasNext", False),
-        "results": summaries,
+        "sources": results,
     }
+
+
+async def _search_source(source_id: str, query: str, search_type: str,
+                          limit: int, credentials: dict, source_name: str) -> dict:
+    """Dispatch search to the appropriate source service."""
+
+    if source_id == "usaspending":
+        if search_type == "piid":
+            raw = await usaspending.search_awards_by_piid(query, limit=limit)
+        else:
+            raw = await usaspending.search_awards_by_keyword(query, limit=limit, page=1)
+
+        results_raw = raw.get("results", [])
+        page_meta = raw.get("page_metadata", {})
+        summaries = [usaspending.map_search_result_summary(r) for r in results_raw]
+
+        return {
+            "status": "success",
+            "source_name": source_name,
+            "result_count": len(summaries),
+            "total_available": page_meta.get("total", 0),
+            "has_next": page_meta.get("hasNext", False),
+            "results": summaries,
+        }
+
+    elif source_id == "sam_gov":
+        api_key = credentials.get("api_key", "")
+        if not api_key:
+            return {
+                "status": "skipped",
+                "reason": "No API key provided",
+                "source_name": source_name,
+                "results": [],
+            }
+
+        raw = await sam_gov.search_entities(query, api_key, limit=limit)
+        entities = raw.get("entityData", [])
+        summaries = [sam_gov.map_entity_to_summary(e) for e in entities]
+        total = raw.get("totalRecords", len(summaries))
+
+        return {
+            "status": "success",
+            "source_name": source_name,
+            "result_count": len(summaries),
+            "total_available": total,
+            "has_next": False,  # Simplified; SAM.gov pagination is page-based
+            "results": summaries,
+        }
+
+    return {
+        "status": "error",
+        "error": f"Unknown source: {source_id}",
+        "source_name": source_name,
+        "results": [],
+    }
+
+
+# ─── Enrich (SAM.gov → Company node) ────────────────────────
+
+@router.post("/{case_id}/enrich")
+async def enrich_company(case_id: str, body: EnrichRequest):
+    """
+    Fetch full SAM.gov entity data for a UEI and merge into
+    the existing Company node in Neo4j.
+    """
+    case = case_service.get_case(case_id)
+    if not case:
+        raise HTTPException(404, "Case not found")
+
+    api_key = body.credentials.get("api_key", "")
+    if not api_key:
+        raise HTTPException(400, "SAM.gov API key required for enrichment")
+
+    try:
+        entity = await sam_gov.get_entity_by_uei(body.uei, api_key)
+        if not entity:
+            raise HTTPException(404, f"No SAM.gov entity found for UEI: {body.uei}")
+
+        company_data = sam_gov.map_entity_to_company(entity)
+        result = graph_service.enrich_company(body.uei, company_data)
+
+        if not result:
+            # Company doesn't exist yet — create it
+            company_data["uei"] = body.uei
+            company_data["source"] = "SAM.gov"
+            company_data["first_seen"] = company_data.get("registration_date", "")
+            company_data["naics_codes"] = []
+            result = graph_service.create_company(company_data)
+            if result:
+                node = result["c"]
+                case_service.link_node_to_case(node.get("node_id"), case_id)
+
+        return {
+            "status": "enriched",
+            "uei": body.uei,
+            "company": company_data,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"SAM.gov enrichment failed for UEI {body.uei}: {e}")
+        raise HTTPException(502, f"SAM.gov enrichment error: {str(e)}")
 
 
 # ─── Ingest (write to graph) ────────────────────────────────

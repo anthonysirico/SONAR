@@ -238,3 +238,50 @@ def get_top_prominence(limit: int = 20):
     with db.session() as session:
         result = session.run(query, {"limit": limit})
         return [record.data() for record in result]
+
+
+# ─── Enrichment ──────────────────────────────────────────────
+
+def enrich_company(uei: str, data: dict):
+    """
+    Enrich an existing Company node with SAM.gov data.
+    Only updates fields that are empty or add new SAM-specific data.
+    Does not overwrite name or existing non-empty fields from USASpending.
+    """
+    query = """
+    MATCH (c:Company {uei: $uei})
+    SET c.cage_code = CASE WHEN c.cage_code IS NULL OR c.cage_code = ''
+                           THEN $cage_code ELSE c.cage_code END,
+        c.entity_type = CASE WHEN c.entity_type IS NULL OR c.entity_type = ''
+                              THEN $entity_type ELSE c.entity_type END,
+        c.set_aside_status = CASE WHEN c.set_aside_status IS NULL OR size(c.set_aside_status) = 0
+                                   THEN $set_aside_status ELSE c.set_aside_status END,
+        c.exclusion_flag = $exclusion_flag,
+        c.address = CASE WHEN c.address IS NULL OR c.address = ''
+                         THEN $address ELSE c.address END,
+        c.dba_name = $dba_name,
+        c.registration_date = $registration_date,
+        c.registration_expiration = $registration_expiration,
+        c.state_of_incorporation = $state_of_incorporation,
+        c.country_of_incorporation = $country_of_incorporation,
+        c.profit_structure = $profit_structure,
+        c.sam_enriched = true
+    RETURN c
+    """
+    params = {
+        "uei": uei,
+        "cage_code": data.get("cage_code", ""),
+        "entity_type": data.get("entity_type", ""),
+        "set_aside_status": data.get("set_aside_status", []),
+        "exclusion_flag": data.get("exclusion_flag", False),
+        "address": data.get("address", ""),
+        "dba_name": data.get("dba_name", ""),
+        "registration_date": data.get("registration_date", ""),
+        "registration_expiration": data.get("registration_expiration", ""),
+        "state_of_incorporation": data.get("state_of_incorporation", ""),
+        "country_of_incorporation": data.get("country_of_incorporation", ""),
+        "profit_structure": data.get("profit_structure", ""),
+    }
+    with db.session() as session:
+        result = session.run(query, params)
+        return result.single()

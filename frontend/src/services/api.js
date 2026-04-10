@@ -40,13 +40,26 @@ export async function fetchCaseGraph(caseId) {
   return data.graph || []
 }
 
-// ─── Search ─────────────────────────────────────────────────
+// ─── Sources ────────────────────────────────────────────────
 
-export async function searchUSASpending(caseId, query, searchType = 'keyword', limit = 25) {
+export async function fetchSources() {
+  const res = await fetch(`${API}/api/sources/`)
+  const data = await res.json()
+  return data.sources || []
+}
+
+// ─── Multi-Source Search ────────────────────────────────────
+
+export async function searchSources(caseId, query, searchType = 'keyword', limit = 25, credentials = {}) {
   const res = await fetch(`${API}/api/cases/${caseId}/search`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query, search_type: searchType, limit }),
+    body: JSON.stringify({
+      query,
+      search_type: searchType,
+      limit,
+      credentials,
+    }),
   })
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
@@ -66,6 +79,21 @@ export async function ingestAwards(caseId, internalIds) {
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
     throw new Error(err.detail || `Ingest failed (${res.status})`)
+  }
+  return res.json()
+}
+
+// ─── Enrich (SAM.gov) ───────────────────────────────────────
+
+export async function enrichCompany(caseId, uei, credentials = {}) {
+  const res = await fetch(`${API}/api/cases/${caseId}/enrich`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ uei, credentials }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.detail || `Enrichment failed (${res.status})`)
   }
   return res.json()
 }
