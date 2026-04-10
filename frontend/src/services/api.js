@@ -1,23 +1,99 @@
-const BASE_URL = 'http://localhost:8000/api'
+const API = 'http://localhost:8000'
 
-export const fetchFullGraph = async () => {
-  const res = await fetch(`${BASE_URL}/graph/`)
+// ─── Graph ──────────────────────────────────────────────────
+
+export async function fetchFullGraph() {
+  const res = await fetch(`${API}/api/graph/`)
+  const data = await res.json()
+  return data
+}
+
+export async function computeProminence() {
+  const res = await fetch(`${API}/api/graph/prominence/compute`, { method: 'POST' })
   return res.json()
 }
 
-export const fetchTopNodes = async (limit = 20) => {
-  const res = await fetch(`${BASE_URL}/graph/top?limit=${limit}`)
-  return res.json()
+// ─── Cases ──────────────────────────────────────────────────
+
+export async function fetchCases(status = null) {
+  const url = status
+    ? `${API}/api/cases/?status=${status}`
+    : `${API}/api/cases/`
+  const res = await fetch(url)
+  const data = await res.json()
+  return data.cases || []
 }
 
-export const fetchNodeDetail = async (nodeId) => {
-  const res = await fetch(`${BASE_URL}/graph/${nodeId}`)
-  return res.json()
-}
-
-export const computeProminence = async () => {
-  const res = await fetch(`${BASE_URL}/graph/prominence/compute`, {
-    method: 'POST'
+export async function createCase(name, description = '') {
+  const res = await fetch(`${API}/api/cases/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, description }),
   })
+  const data = await res.json()
+  return data.case
+}
+
+export async function fetchCaseGraph(caseId) {
+  const res = await fetch(`${API}/api/cases/${caseId}/graph`)
+  const data = await res.json()
+  return data.graph || []
+}
+
+// ─── Sources ────────────────────────────────────────────────
+
+export async function fetchSources() {
+  const res = await fetch(`${API}/api/sources/`)
+  const data = await res.json()
+  return data.sources || []
+}
+
+// ─── Multi-Source Search ────────────────────────────────────
+
+export async function searchSources(caseId, query, searchType = 'keyword', limit = 25, credentials = {}) {
+  const res = await fetch(`${API}/api/cases/${caseId}/search`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      query,
+      search_type: searchType,
+      limit,
+      credentials,
+    }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.detail || `Search failed (${res.status})`)
+  }
+  return res.json()
+}
+
+// ─── Ingest ─────────────────────────────────────────────────
+
+export async function ingestAwards(caseId, internalIds) {
+  const res = await fetch(`${API}/api/cases/${caseId}/ingest`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ internal_ids: internalIds }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.detail || `Ingest failed (${res.status})`)
+  }
+  return res.json()
+}
+
+// ─── Enrich (SAM.gov) ───────────────────────────────────────
+
+export async function enrichCompany(caseId, uei, credentials = {}) {
+  const res = await fetch(`${API}/api/cases/${caseId}/enrich`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ uei, credentials }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.detail || `Enrichment failed (${res.status})`)
+  }
   return res.json()
 }

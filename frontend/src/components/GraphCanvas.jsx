@@ -29,7 +29,6 @@ function transformGraphData(raw) {
     const r = record.r
 
     if (n) {
-      const labels = Object.keys(n).length ? n : {}
       const id = n.node_id || JSON.stringify(n)
       const label = n.name || n.piid || n.node_id || 'Unknown'
       const type = n._labels?.[0] ?? 'Unknown'
@@ -145,31 +144,54 @@ const stylesheet = [
   },
 ]
 
+const LAYOUT_OPTIONS = { name: 'cose', animate: true, padding: 40, fit: true }
+
 export default function GraphCanvas({ elements }) {
   const cyRef = useRef(null)
   const [selectedNode, setSelectedNode] = useState(null)
 
+  // Re-run layout whenever elements change
   useEffect(() => {
-    if (!cyRef.current) return
     const cy = cyRef.current
+    if (!cy) return
+    if (elements.length === 0) return
 
-    cy.on('tap', 'node', (evt) => {
-      setSelectedNode(evt.target)
-    })
+    // Small delay to let Cytoscape process the new elements
+    const timer = setTimeout(() => {
+      try {
+        cy.layout(LAYOUT_OPTIONS).run()
+      } catch (e) {
+        // Guard against renderer-not-ready errors
+        console.warn('Layout skipped:', e.message)
+      }
+    }, 50)
 
-    cy.on('tap', (evt) => {
-      if (evt.target === cy) setSelectedNode(null)
-    })
-
-    return () => cy.removeAllListeners()
+    return () => clearTimeout(timer)
   }, [elements])
+
+  // Tap handlers
+  useEffect(() => {
+    const cy = cyRef.current
+    if (!cy) return
+
+    const onNodeTap = (evt) => setSelectedNode(evt.target)
+    const onBgTap = (evt) => { if (evt.target === cy) setSelectedNode(null) }
+
+    cy.on('tap', 'node', onNodeTap)
+    cy.on('tap', onBgTap)
+
+    return () => {
+      cy.off('tap', 'node', onNodeTap)
+      cy.off('tap', onBgTap)
+    }
+  }, [])
 
   return (
     <div className="relative w-full h-full">
       <CytoscapeComponent
         elements={elements}
         stylesheet={stylesheet}
-        layout={{ name: 'cose', animate: true, padding: 40 }}
+        layout={{ name: 'preset' }}
         style={{ width: '100%', height: '100%', background: '#0f172a' }}
         cy={(cy) => { cyRef.current = cy }}
       />
