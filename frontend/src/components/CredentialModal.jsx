@@ -36,7 +36,7 @@ export default function CredentialModal({ source, onSubmit, onClose }) {
       <div className="relative w-full max-w-md bg-gray-900 border border-gray-700 rounded-xl shadow-2xl overflow-hidden">
 
         {/* Header gradient accent */}
-        <div className="h-1 bg-gradient-to-r from-cyan-500 via-blue-500 to-purple-500" />
+        <div className="h-1 bg-linear-to-r from-cyan-500 via-blue-500 to-purple-500" />
 
         <div className="p-6">
           {/* Icon + Title */}
@@ -85,7 +85,7 @@ export default function CredentialModal({ source, onSubmit, onClose }) {
               <button
                 type="submit"
                 disabled={!apiKey.trim() || validating}
-                className="px-5 py-2 text-xs rounded-lg bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 disabled:from-gray-700 disabled:to-gray-700 disabled:text-gray-500 text-white font-medium transition-all shadow-lg shadow-cyan-500/20 disabled:shadow-none"
+                className="px-5 py-2 text-xs rounded-lg bg-linear-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 disabled:from-gray-700 disabled:to-gray-700 disabled:text-gray-500 text-white font-medium transition-all shadow-lg shadow-cyan-500/20 disabled:shadow-none"
               >
                 {validating ? 'Validating...' : 'Connect'}
               </button>

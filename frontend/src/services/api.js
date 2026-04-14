@@ -40,6 +40,15 @@ export async function fetchCaseGraph(caseId) {
   return data.graph || []
 }
 
+export async function deleteCase(caseId) {
+  const res = await fetch(`${API}/api/cases/${caseId}`, { method: 'DELETE' })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.detail || `Delete failed (${res.status})`)
+  }
+  return res.json()
+}
+
 // ─── Sources ────────────────────────────────────────────────
 
 export async function fetchSources() {

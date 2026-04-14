@@ -9,6 +9,7 @@ import {
   computeProminence,
   fetchCases,
   createCase,
+  deleteCase,
   fetchSources,
   searchSources,
   ingestAwards,
@@ -227,6 +228,22 @@ export default function Dashboard() {
     setEnriching(false)
   }
 
+  const handleDeleteCase = async (caseId) => {
+    try {
+      await deleteCase(caseId)
+      setCases((prev) => prev.filter((c) => c.case_id !== caseId))
+      if (activeCase?.case_id === caseId) {
+        setActiveCase(null)
+        setElements([])
+        setSearchResults(null)
+        setSearchOpen(false)
+      }
+      flash('Case deleted')
+    } catch (e) {
+      flash(`Delete failed: ${e.message}`)
+    }
+  }
+
   const handleCompute = async () => {
     flash('Recomputing...')
     await computeProminence()
@@ -264,6 +281,7 @@ export default function Dashboard() {
         onCreateCase={handleCreateCase}
         onSearch={handleSearch}
         onCompute={handleCompute}
+        onDeleteCase={handleDeleteCase}
         sources={sources}
         sourceCredentials={sourceCredentials}
         onSourceClick={handleSourceClick}

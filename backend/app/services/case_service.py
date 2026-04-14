@@ -141,3 +141,43 @@ def update_case_timestamp(case_id: str):
     now = datetime.now(timezone.utc).isoformat()
     with db.session() as session:
         session.run(query, {"case_id": case_id, "updated_at": now})
+
+
+def delete_case(case_id: str) -> bool:
+    """
+    Delete a case and clear all of its data.
+    Nodes that belong only to this case are DETACH DELETEd (removing all their edges too).
+    Nodes shared with other cases have only their PART_OF_CASE edge to this case removed.
+    The Case node itself is deleted last.
+    """
+    with db.session() as session:
+        exists = session.run(
+            "MATCH (c:Case {case_id: $case_id}) RETURN c",
+            {"case_id": case_id}
+        ).single()
+        if not exists:
+            return False
+
+        # Delete nodes that belong exclusively to this case
+        session.run("""
+            MATCH (n)-[:PART_OF_CASE]->(c:Case {case_id: $case_id})
+            OPTIONAL MATCH (n)-[:PART_OF_CASE]->(other:Case)
+            WHERE other.case_id <> $case_id
+            WITH n, count(other) AS shared
+            WHERE shared = 0
+            DETACH DELETE n
+        """, {"case_id": case_id})
+
+        # Remove the PART_OF_CASE edges for nodes shared with other cases
+        session.run("""
+            MATCH (n)-[r:PART_OF_CASE]->(c:Case {case_id: $case_id})
+            DELETE r
+        """, {"case_id": case_id})
+
+        # Delete the Case node itself
+        session.run("""
+            MATCH (c:Case {case_id: $case_id})
+            DETACH DELETE c
+        """, {"case_id": case_id})
+
+        return True

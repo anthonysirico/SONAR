@@ -151,7 +151,7 @@ export default function NodeDetail({ node, onClose }) {
               <span className="text-gray-500 capitalize shrink-0">
                 {key.replace(/_/g, ' ')}
               </span>
-              <span className="text-gray-300 text-right break-words min-w-0">
+              <span className="text-gray-300 text-right wrap-break-word min-w-0">
                 {Array.isArray(val) ? val.join(', ') : String(val)}
               </span>
             </div>

@@ -94,6 +94,15 @@ async def close_case(case_id: str):
     return {"status": "closed", "case": case}
 
 
+@router.delete("/{case_id}")
+async def delete_case(case_id: str):
+    """Delete a case and all data exclusive to it."""
+    deleted = case_service.delete_case(case_id)
+    if not deleted:
+        raise HTTPException(404, "Case not found")
+    return {"status": "deleted", "case_id": case_id}
+
+
 @router.get("/{case_id}/graph")
 async def get_case_graph(case_id: str):
     """Return all nodes/edges belonging to this case."""
@@ -350,7 +359,7 @@ def _ingest_single_award(award: dict, case_id: str) -> dict:
             summary["organization"] = {"name": node.get("name"), "node_id": node.get("node_id")}
             case_service.link_node_to_case(node.get("node_id"), case_id)
 
-    # 4. AWARDED_TO edge (Organization → Company)
+    # 4. AWARDED_TO edge (Organization → Company) — used by detection algorithms
     if org_data.get("name") and company_data.get("uei"):
         edge_props = usaspending.map_award_to_awarded_edge(award)
         edge_record = graph_service.create_awarded_to(
@@ -358,6 +367,15 @@ def _ingest_single_award(award: dict, case_id: str) -> dict:
         )
         if edge_record:
             summary["edges"].append("AWARDED_TO")
+
+    # 5. Organization → Contract → Company chain (connects Contract nodes in the graph)
+    if org_data.get("name") and contract_data.get("piid"):
+        graph_service.create_org_awarded_contract(org_data["name"], contract_data["piid"])
+        summary["edges"].append("AWARDED (org→contract)")
+
+    if contract_data.get("piid") and company_data.get("uei"):
+        graph_service.create_contract_to_recipient(contract_data["piid"], company_data["uei"])
+        summary["edges"].append("AWARDED_TO (contract→company)")
 
     return summary
 

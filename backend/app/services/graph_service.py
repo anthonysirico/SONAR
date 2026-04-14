@@ -177,6 +177,32 @@ def create_principal_of(individual_name: str, company_uei: str, props: dict):
         return result.single()
 
 
+def create_org_awarded_contract(org_name: str, piid: str):
+    """Create AWARDED edge from Organization to Contract."""
+    query = """
+    MATCH (o:Organization {name: $org_name})
+    MATCH (ct:Contract {piid: $piid})
+    MERGE (o)-[r:AWARDED]->(ct)
+    RETURN r
+    """
+    with db.session() as session:
+        result = session.run(query, {"org_name": org_name, "piid": piid})
+        return result.single()
+
+
+def create_contract_to_recipient(piid: str, company_uei: str):
+    """Create AWARDED_TO edge from Contract to Company (recipient)."""
+    query = """
+    MATCH (ct:Contract {piid: $piid})
+    MATCH (c:Company {uei: $company_uei})
+    MERGE (ct)-[r:AWARDED_TO]->(c)
+    RETURN r
+    """
+    with db.session() as session:
+        result = session.run(query, {"piid": piid, "company_uei": company_uei})
+        return result.single()
+
+
 def create_shares_address_with(company_uei_1: str, company_uei_2: str, props: dict):
     query = """
     MATCH (c1:Company {uei: $uei_1})

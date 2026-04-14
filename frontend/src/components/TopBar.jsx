@@ -6,6 +6,7 @@ export default function TopBar({
   onSelectCase,
   onViewAll,
   onCreateCase,
+  onDeleteCase,
   onSearch,
   onCompute,
   sources,
@@ -18,6 +19,7 @@ export default function TopBar({
   const [createMode, setCreateMode] = useState(false)
   const [newCaseName, setNewCaseName] = useState('')
   const [newCaseDesc, setNewCaseDesc] = useState('')
+  const [confirmDelete, setConfirmDelete] = useState(null)
 
   const dropdownRef = useRef(null)
   const searchRef = useRef(null)
@@ -74,7 +76,7 @@ export default function TopBar({
       <div className="relative" ref={dropdownRef}>
         <button
           onClick={() => setCaseDropdownOpen(!caseDropdownOpen)}
-          className="flex items-center gap-2 px-3 py-1.5 text-xs rounded bg-gray-800 hover:bg-gray-700 border border-gray-600 transition-colors min-w-[180px]"
+          className="flex items-center gap-2 px-3 py-1.5 text-xs rounded bg-gray-800 hover:bg-gray-700 border border-gray-600 transition-colors min-w-45"
         >
           <svg className="w-3.5 h-3.5 text-cyan-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
@@ -97,18 +99,49 @@ export default function TopBar({
                     <div className="px-3 py-2 text-xs text-gray-500">No cases yet</div>
                   )}
                   {cases.map((c) => (
-                    <button
+                    <div
                       key={c.case_id}
-                      onClick={() => { onSelectCase(c); setCaseDropdownOpen(false) }}
-                      className={`w-full text-left px-3 py-2 text-xs hover:bg-gray-700 transition-colors flex items-center justify-between ${
+                      className={`group flex items-center text-xs hover:bg-gray-700 transition-colors ${
                         activeCase?.case_id === c.case_id ? 'bg-gray-700 text-cyan-400' : 'text-gray-300'
                       }`}
                     >
-                      <span className="truncate">{c.name}</span>
-                      <span className="text-gray-500 shrink-0 ml-2">
-                        {c.node_count ?? 0} nodes
-                      </span>
-                    </button>
+                      <button
+                        onClick={() => { onSelectCase(c); setCaseDropdownOpen(false) }}
+                        className="flex-1 text-left px-3 py-2 flex items-center justify-between min-w-0"
+                      >
+                        <span className="truncate">{c.name}</span>
+                        <span className="text-gray-500 shrink-0 ml-2">
+                          {c.node_count ?? 0} nodes
+                        </span>
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          if (confirmDelete === c.case_id) {
+                            onDeleteCase(c.case_id)
+                            setConfirmDelete(null)
+                            setCaseDropdownOpen(false)
+                          } else {
+                            setConfirmDelete(c.case_id)
+                            setTimeout(() => setConfirmDelete(null), 2500)
+                          }
+                        }}
+                        title={confirmDelete === c.case_id ? 'Click again to confirm' : 'Delete case'}
+                        className={`shrink-0 px-2 py-2 transition-colors opacity-0 group-hover:opacity-100 ${
+                          confirmDelete === c.case_id
+                            ? 'text-red-400 opacity-100'
+                            : 'text-gray-500 hover:text-red-400'
+                        }`}
+                      >
+                        {confirmDelete === c.case_id ? (
+                          <span className="text-xs font-medium">del?</span>
+                        ) : (
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        )}
+                      </button>
+                    </div>
                   ))}
                 </div>
 
@@ -241,7 +274,7 @@ export default function TopBar({
                 <span className={`w-1.5 h-1.5 rounded-full ${
                   hasCredentials ? 'bg-cyan-400' : 'bg-gray-600'
                 }`} />
-                <span className="truncate max-w-[80px]">{s.name.replace('.gov', '')}</span>
+                <span className="truncate max-w-20">{s.name.replace('.gov', '')}</span>
               </button>
             )
           })}

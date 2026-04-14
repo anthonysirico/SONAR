@@ -211,7 +211,7 @@ export default function SearchPanel({
 
   return (
     <div
-      className={`absolute top-0 right-0 h-full w-[440px] bg-gray-900 border-l border-gray-700 shadow-2xl transition-transform duration-300 ease-in-out z-40 flex flex-col ${
+      className={`absolute top-0 right-0 h-full w-110 bg-gray-900 border-l border-gray-700 shadow-2xl transition-transform duration-300 ease-in-out z-40 flex flex-col ${
         open ? 'translate-x-0' : 'translate-x-full'
       }`}
     >
