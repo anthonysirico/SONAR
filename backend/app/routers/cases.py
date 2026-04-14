@@ -18,6 +18,7 @@ import logging
 from app.services import case_service
 from app.services import usaspending
 from app.services import sam_gov
+from app.services import open_corporates
 from app.services import graph_service
 from app.services import entity_resolution
 from app.services.source_registry import sources_for_search_type
@@ -54,12 +55,15 @@ class IngestRequest(BaseModel):
     )
 
 class EnrichRequest(BaseModel):
-    """Enrich a Company node with SAM.gov entity data."""
+    """Enrich a Company node with SAM.gov and OpenCorporates.com entity data."""
     uei: str = Field(..., min_length=1, description="UEI of the company to enrich")
     credentials: dict = Field(
         default={},
-        description="SAM.gov credentials: {'api_key': '...'}"
+        sam_description="SAM.gov credentials: {'api_key': '...'}",
+        oc_description="OpenCorporates credentials: {'api_key': '...'}"
     )
+
+
 
 
 # ─── Case CRUD ───────────────────────────────────────────────
@@ -223,6 +227,22 @@ async def _search_source(source_id: str, query: str, search_type: str,
             "has_next": False,  # Simplified; SAM.gov pagination is page-based
             "results": summaries,
         }
+    
+    elif source_id == "open_corporates":
+        api_key = credentials.get("api_key", "")
+        raw = await open_corporates.search_companies(query, api_key, limit=limit)
+        companies = raw.get("results", {}).get("companies", [])
+        summaries = [open_corporates.map_company_to_summary(c) for c in companies]
+        total = raw.get("results", {}).get("total_count", len(summaries))
+
+        return {
+            "status": "success",
+            "source_name": source_name,
+            "result_count": len(summaries),
+            "total_available": total,
+            "has_next": False,  # OpenCorporates pagination is page-based
+            "results": summaries,
+        }
 
     return {
         "status": "error",
@@ -277,6 +297,49 @@ async def enrich_company(case_id: str, body: EnrichRequest):
     except Exception as e:
         logger.error(f"SAM.gov enrichment failed for UEI {body.uei}: {e}")
         raise HTTPException(502, f"SAM.gov enrichment error: {str(e)}")
+
+# ─── Enrich (OpenCorporates → Company node) ────────────────────────
+@router.post("/{case_id}/enrich_oc")
+async def enrich_company_oc(case_id: str, body: EnrichRequest):
+    """
+    Fetch full OpenCorporates company data for a company name and merge into
+    the existing Company node in Neo4j.
+    """
+    case = case_service.get_case(case_id)
+    if not case:
+        raise HTTPException(404, "Case not found")
+
+    api_key = body.credentials.get("api_key", "")
+    if not api_key:
+        raise HTTPException(400, "OpenCorporates API key required for enrichment")
+
+    try:
+        company = await open_corporates.get_company_by_jurisdiction_and_number(body.uei, api_key)
+        if not company:
+            raise HTTPException(404, f"No OpenCorporates company found for identifier: {body.uei}")
+
+        company_data = open_corporates.map_company_to_company_node(company)
+        result = graph_service.enrich_company(body.uei, company_data)
+
+        if not result:
+            # Company doesn't exist yet — create it
+            company_data["source"] = "OpenCorporates"
+            company_data["first_seen"] = company_data.get("incorporation_date", "")
+            result = graph_service.create_company(company_data)
+            if result:
+                node = result["c"]
+                case_service.link_node_to_case(node.get("node_id"), case_id)
+
+        return {
+            "status": "enriched",
+            "identifier": body.uei,
+            "company": company_data,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"OpenCorporates enrichment failed for identifier {body.uei}: {e}")
+        raise HTTPException(502, f"OpenCorporates enrichment error: {str(e)}")
 
 
 # ─── Ingest (write to graph) ────────────────────────────────
