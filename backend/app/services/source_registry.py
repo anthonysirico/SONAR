@@ -25,6 +25,26 @@ DATA_SOURCES = [
         "search_types": ["keyword"],
         "status": "active",
     },
+    {
+        "id": "propublica_990",
+        "name": "IRS 990 (ProPublica)",
+        "description": "Nonprofit tax filings — revenue, expenses, officer compensation",
+        "auth_required": False,
+        "auth_type": None,
+        "auth_fields": [],
+        "search_types": ["keyword"],
+        "status": "active",
+    },
+    {
+        "id": "open_corporates",
+        "name": "OpenCorporates",
+        "description": "Corporate registrations, officers, and subsidiaries",
+        "auth_required": True,
+        "auth_type": "api_key",
+        "auth_fields": ["api_key"],
+        "search_types": ["keyword"],
+        "status": "active",
+    },
 ]
 
 

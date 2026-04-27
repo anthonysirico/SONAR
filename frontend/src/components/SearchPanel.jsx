@@ -140,6 +140,101 @@ function SAMGovCard({ r, selected, onToggle }) {
   )
 }
 
+// ─── ProPublica 990 Result Card ───────────────────────────
+
+function ProPublica990Card({ r, selected, onToggle }) {
+  return (
+    <div
+      onClick={() => r.ein && onToggle(r.ein)}
+      className={`px-4 py-3 border-b border-gray-800 cursor-pointer transition-colors ${
+        selected
+          ? 'bg-emerald-900/30 border-l-2 border-l-emerald-400'
+          : 'hover:bg-gray-800/50 border-l-2 border-l-transparent'
+      }`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex-1 min-w-0">
+          <div className="text-xs font-medium text-white truncate">
+            {r.name || 'Unknown Organization'}
+          </div>
+          {r.sub_name && (
+            <div className="text-xs text-gray-500 mt-0.5 italic">
+              {r.sub_name}
+            </div>
+          )}
+          <div className="text-xs text-gray-500 mt-0.5 font-mono">
+            EIN: {r.strein || r.ein || 'N/A'}
+          </div>
+        </div>
+        <div className="shrink-0 text-right">
+          {r.revenue_amount > 0 && (
+            <div className="text-xs font-medium text-emerald-400">
+              {formatDollars(r.revenue_amount)}
+            </div>
+          )}
+          {r.income_amount > 0 && r.income_amount !== r.revenue_amount && (
+            <div className="text-xs text-gray-500">
+              Income: {formatDollars(r.income_amount)}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="flex items-center gap-3 mt-1.5 text-xs text-gray-500">
+        {r.city && <span>{r.city}, {r.state}</span>}
+        {r.ntee_code && (
+          <span className="px-1.5 py-0.5 rounded bg-gray-800 text-gray-400">
+            NTEE: {r.ntee_code}
+          </span>
+        )}
+      </div>
+      {r.asset_amount > 0 && (
+        <div className="mt-1 text-xs text-gray-500">
+          Assets: {formatDollars(r.asset_amount)}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── OpenCorporates Result Card ───────────────────────────
+
+function OpenCorpCard({ r }) {
+  return (
+    <div className="px-4 py-3 border-b border-gray-800 border-l-2 border-l-transparent hover:bg-gray-800/50 transition-colors">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex-1 min-w-0">
+          <div className="text-xs font-medium text-white truncate">
+            {r.name || 'Unknown Company'}
+          </div>
+          <div className="text-xs text-gray-500 mt-0.5 font-mono">
+            {r.jurisdiction_code?.toUpperCase()} — #{r.company_number || 'N/A'}
+          </div>
+        </div>
+        <span className={`text-xs px-1.5 py-0.5 rounded font-medium shrink-0 ${
+          r.current_status === 'Active'
+            ? 'bg-emerald-500/10 text-emerald-400'
+            : r.current_status === 'Dissolved'
+              ? 'bg-red-500/10 text-red-400'
+              : 'bg-gray-800 text-gray-400'
+        }`}>
+          {r.current_status || 'Unknown'}
+        </span>
+      </div>
+
+      <div className="flex items-center gap-3 mt-1.5 text-xs text-gray-500">
+        {r.company_type && <span>{r.company_type}</span>}
+        {r.incorporation_date && <span>Inc: {r.incorporation_date}</span>}
+      </div>
+      {r.registered_address && (
+        <div className="mt-1 text-xs text-gray-500 truncate">
+          {r.registered_address}
+        </div>
+      )}
+    </div>
+  )
+}
+
 
 // ─── Main SearchPanel ───────────────────────────────────────
 
@@ -151,10 +246,12 @@ export default function SearchPanel({
   results,
   onIngest,
   onEnrich,
+  onEnrichNonprofit,
   onClose,
 }) {
   const [selectedUSA, setSelectedUSA] = useState(new Set())
   const [selectedSAM, setSelectedSAM] = useState(new Set())
+  const [selected990, setSelected990] = useState(new Set())
   const [expandedSources, setExpandedSources] = useState({})
 
   // Multi-source results structure: results.sources = { usaspending: {...}, sam_gov: {...} }
@@ -172,6 +269,14 @@ export default function SearchPanel({
     setSelectedSAM((prev) => {
       const next = new Set(prev)
       next.has(uei) ? next.delete(uei) : next.add(uei)
+      return next
+    })
+  }
+
+  const toggle990 = (ein) => {
+    setSelected990((prev) => {
+      const next = new Set(prev)
+      next.has(ein) ? next.delete(ein) : next.add(ein)
       return next
     })
   }
@@ -197,17 +302,30 @@ export default function SearchPanel({
     setSelectedSAM(new Set())
   }
 
+  const handleEnrich990 = () => {
+    const eins = Array.from(selected990)
+    if (eins.length === 0) return
+    onEnrichNonprofit?.(eins)
+    setSelected990(new Set())
+  }
+
   const usaData = sources.usaspending || {}
   const samData = sources.sam_gov || {}
+  const ppData = sources.propublica_990 || {}
+  const ocData = sources.open_corporates || {}
   const usaItems = usaData.results || []
   const samItems = samData.results || []
+  const ppItems = ppData.results || []
+  const ocItems = ocData.results || []
 
-  const hasAnyResults = usaItems.length > 0 || samItems.length > 0
+  const hasAnyResults = usaItems.length > 0 || samItems.length > 0 || ppItems.length > 0 || ocItems.length > 0
   const hasAnyError = usaData.status === 'error' || samData.status === 'error'
 
   // Default to expanded
   const isUSAExpanded = expandedSources.usaspending !== false
   const isSAMExpanded = expandedSources.sam_gov !== false
+  const isPPExpanded = expandedSources.propublica_990 !== false
+  const isOCExpanded = expandedSources.open_corporates !== false
 
   return (
     <div
@@ -359,6 +477,104 @@ export default function SearchPanel({
               </div>
             )}
 
+            {/* ── ProPublica 990 Section ── */}
+            {ppData.source_name && (
+              <div>
+                <button
+                  onClick={() => toggleSource('propublica_990')}
+                  className="w-full flex items-center justify-between px-4 py-2.5 bg-gray-800/50 border-b border-gray-700 hover:bg-gray-800 transition-colors"
+                >
+                  <div className="flex items-center gap-2">
+                    <svg className={`w-3 h-3 text-gray-400 transition-transform ${isPPExpanded ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                    <span className="text-xs font-medium text-emerald-400">
+                      {ppData.source_name}
+                    </span>
+                    {ppData.status === 'success' && (
+                      <span className="text-xs text-gray-500">
+                        {ppData.result_count} of {ppData.total_available?.toLocaleString()}
+                      </span>
+                    )}
+                  </div>
+                  <SourceStatus status={ppData.status} error={ppData.error} reason={ppData.reason} />
+                </button>
+
+                {isPPExpanded && ppItems.length > 0 && (
+                  <div>
+                    {ppItems.map((r) => (
+                      <ProPublica990Card
+                        key={r.ein || r.name}
+                        r={r}
+                        selected={selected990.has(r.ein)}
+                        onToggle={toggle990}
+                      />
+                    ))}
+                  </div>
+                )}
+
+                {isPPExpanded && ppData.status === 'success' && ppItems.length === 0 && (
+                  <div className="px-4 py-3 text-xs text-gray-500">
+                    No nonprofit filings found
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── OpenCorporates Section ── */}
+            {ocData.source_name && (
+              <div>
+                <button
+                  onClick={() => toggleSource('open_corporates')}
+                  className="w-full flex items-center justify-between px-4 py-2.5 bg-gray-800/50 border-b border-gray-700 hover:bg-gray-800 transition-colors"
+                >
+                  <div className="flex items-center gap-2">
+                    <svg className={`w-3 h-3 text-gray-400 transition-transform ${isOCExpanded ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                    <span className="text-xs font-medium text-amber-400">
+                      {ocData.source_name}
+                    </span>
+                    {ocData.status === 'success' && (
+                      <span className="text-xs text-gray-500">
+                        {ocData.result_count} result(s)
+                      </span>
+                    )}
+                  </div>
+                  <SourceStatus status={ocData.status} error={ocData.error} reason={ocData.reason} />
+                </button>
+
+                {isOCExpanded && ocItems.length > 0 && (
+                  <div>
+                    {ocItems.map((r) => (
+                      <OpenCorpCard
+                        key={`${r.jurisdiction_code}-${r.company_number}`}
+                        r={r}
+                      />
+                    ))}
+                  </div>
+                )}
+
+                {isOCExpanded && ocData.status === 'skipped' && (
+                  <div className="px-4 py-3 text-xs text-gray-500 italic">
+                    {ocData.reason || 'No credentials provided — click the OpenCorp badge to connect'}
+                  </div>
+                )}
+
+                {isOCExpanded && ocData.status === 'error' && (
+                  <div className="px-4 py-3 text-xs text-red-400">
+                    {ocData.error}
+                  </div>
+                )}
+
+                {isOCExpanded && ocData.status === 'success' && ocItems.length === 0 && (
+                  <div className="px-4 py-3 text-xs text-gray-500">
+                    No corporate registrations found
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* No sources at all state */}
             {Object.keys(sources).length === 0 && (
               <div className="flex items-center justify-center h-32 text-gray-500 text-xs">
@@ -370,7 +586,7 @@ export default function SearchPanel({
       </div>
 
       {/* Footer — selection actions */}
-      {(usaItems.length > 0 || samItems.length > 0) && (
+      {(usaItems.length > 0 || samItems.length > 0 || ppItems.length > 0) && (
         <div className="border-t border-gray-700 px-4 py-3 bg-gray-900 space-y-2">
           {/* USASpending ingest action */}
           {usaItems.length > 0 && (
@@ -400,6 +616,22 @@ export default function SearchPanel({
                 className="px-4 py-1.5 text-xs rounded bg-purple-700 hover:bg-purple-600 disabled:bg-gray-700 disabled:text-gray-500 text-white transition-colors"
               >
                 {enriching ? 'Enriching...' : 'Enrich Company'}
+              </button>
+            </div>
+          )}
+
+          {/* ProPublica 990 enrich action */}
+          {ppItems.length > 0 && ppData.status === 'success' && (
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-gray-500">
+                {selected990.size} nonprofit(s) selected
+              </span>
+              <button
+                onClick={handleEnrich990}
+                disabled={selected990.size === 0 || enriching}
+                className="px-4 py-1.5 text-xs rounded bg-emerald-700 hover:bg-emerald-600 disabled:bg-gray-700 disabled:text-gray-500 text-white transition-colors"
+              >
+                {enriching ? 'Enriching...' : 'Enrich with 990'}
               </button>
             </div>
           )}

@@ -8,6 +8,7 @@ export default function TopBar({
   onCreateCase,
   onSearch,
   onCompute,
+  onAddData,
   sources,
   sourceCredentials,
   onSourceClick,
@@ -249,6 +250,16 @@ export default function TopBar({
       )}
 
       {/* ── Right Controls ── */}
+      <button
+        onClick={onAddData}
+        disabled={!activeCase}
+        className="text-xs px-3 py-1.5 rounded bg-gray-800 hover:bg-gray-700 border border-gray-600 text-gray-300 hover:text-white disabled:text-gray-600 disabled:cursor-not-allowed transition-colors shrink-0 flex items-center gap-1.5"
+      >
+        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+        </svg>
+        Add Data
+      </button>
       <button
         onClick={onCompute}
         className="text-xs px-3 py-1.5 rounded bg-gray-800 hover:bg-gray-700 border border-gray-600 text-gray-300 hover:text-white transition-colors shrink-0"

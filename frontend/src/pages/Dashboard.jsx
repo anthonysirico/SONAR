@@ -3,6 +3,7 @@ import GraphCanvas from '../components/GraphCanvas'
 import TopBar from '../components/TopBar'
 import SearchPanel from '../components/SearchPanel'
 import CredentialModal from '../components/CredentialModal'
+import ManualEntryModal from '../components/ManualEntryModal'
 import {
   fetchFullGraph,
   fetchCaseGraph,
@@ -13,19 +14,22 @@ import {
   searchSources,
   ingestAwards,
   enrichCompany,
+  enrichNonprofit,
+  autoEnrich,
 } from '../services/api'
 
 // ─── Graph Transform ────────────────────────────────────────
 
 function transformGraphData(raw) {
   const elements = []
-  const seen = new Set()
+  const seenNodes = new Set()
+  const seenEdges = new Set()
 
   raw.forEach((record) => {
     const addNode = (n) => {
       if (!n || !n.node_id) return
-      if (seen.has(n.node_id)) return
-      seen.add(n.node_id)
+      if (seenNodes.has(n.node_id)) return
+      seenNodes.add(n.node_id)
 
       const score = n.prominence_score ?? 0
       const label = n.name || n.piid || n.node_id
@@ -49,24 +53,31 @@ function transformGraphData(raw) {
     addNode(record.n)
     addNode(record.m)
 
-    const rawR = record.r
-    // Neo4j returns relationships as [startNode, type, properties] arrays
-    const r = Array.isArray(rawR)
-      ? (rawR[2] && typeof rawR[2] === 'object' ? rawR[2] : {})
-      : (rawR || {})
-    const relType = Array.isArray(rawR) && typeof rawR[1] === 'string' ? rawR[1] : ''
+    // Use the backend-provided rel_type (preferred) or parse from array
+    const relType = record.rel_type
+      || (Array.isArray(record.r) && typeof record.r[1] === 'string' ? record.r[1] : '')
     const n = record.n
     const m = record.m
 
-    if (rawR && n?.node_id && m?.node_id) {
+    if (record.r && n?.node_id && m?.node_id && relType && relType !== 'PART_OF_CASE') {
+      // Deduplicate: only one edge per source→target per relationship type
+      const edgeKey = `${n.node_id}→${m.node_id}→${relType}`
+      if (seenEdges.has(edgeKey)) return
+      seenEdges.add(edgeKey)
+
+      const rawR = record.r
+      const rProps = Array.isArray(rawR)
+        ? (rawR[2] && typeof rawR[2] === 'object' ? rawR[2] : {})
+        : (rawR || {})
+
       elements.push({
         data: {
-          id: `${n.node_id}-${m.node_id}-${relType || elements.length}`,
+          id: edgeKey,
           source: n.node_id,
           target: m.node_id,
-          label: relType,
-          confidence: r.confidence ?? 1,
-          weight: r.weight ?? 1,
+          label: relType.replace(/_/g, ' '),
+          confidence: rProps.confidence ?? 1,
+          weight: rProps.weight ?? 1,
         },
       })
     }
@@ -99,6 +110,7 @@ export default function Dashboard() {
 
   // Credential modal state
   const [credentialModal, setCredentialModal] = useState(null) // source object or null
+  const [manualEntryOpen, setManualEntryOpen] = useState(false)
 
   // ─── Load graph ───────────────────────────────────────────
 
@@ -228,10 +240,45 @@ export default function Dashboard() {
   }
 
   const handleCompute = async () => {
-    flash('Recomputing...')
-    await computeProminence()
-    await loadGraph()
-    flash('Done')
+    flash('Recomputing — scrubbing sources…')
+    try {
+      // Auto-enrich: scour internet for additional data on all case nodes
+      if (activeCase) {
+        try {
+          const enrichResult = await autoEnrich(activeCase.case_id)
+          const found = enrichResult.enriched?.length || 0
+          if (found > 0) flash(`Found ${found} new data point(s)`)
+        } catch (e) {
+          console.warn('Auto-enrich error (non-fatal):', e)
+        }
+      }
+      // Recompute prominence scores and WFA detections
+      await computeProminence()
+      await loadGraph()
+      flash('Recompute complete')
+    } catch (e) {
+      flash(`Recompute error: ${e.message}`)
+    }
+  }
+
+  const handleEnrichNonprofit = async (eins) => {
+    if (!activeCase || eins.length === 0) return
+    setEnriching(true)
+    let enrichedCount = 0
+    for (const ein of eins) {
+      try {
+        await enrichNonprofit(activeCase.case_id, ein)
+        enrichedCount++
+      } catch (e) {
+        console.error(`Nonprofit enrich failed for EIN ${ein}:`, e)
+        flash(`990 enrich error: ${e.message}`)
+      }
+    }
+    if (enrichedCount > 0) {
+      flash(`Enriched ${enrichedCount} org(s) with 990 data`)
+      await loadGraph()
+    }
+    setEnriching(false)
   }
 
   const handleSourceClick = (source) => {
@@ -264,6 +311,7 @@ export default function Dashboard() {
         onCreateCase={handleCreateCase}
         onSearch={handleSearch}
         onCompute={handleCompute}
+        onAddData={() => activeCase && setManualEntryOpen(true)}
         sources={sources}
         sourceCredentials={sourceCredentials}
         onSourceClick={handleSourceClick}
@@ -277,7 +325,7 @@ export default function Dashboard() {
 
       <div className="flex-1 relative overflow-hidden">
         {/* Always mount GraphCanvas to avoid Cytoscape destroy/recreate errors */}
-        <GraphCanvas elements={elements} />
+        <GraphCanvas elements={elements} caseId={activeCase?.case_id} onRefresh={loadGraph} />
 
         {/* Overlay states on top of canvas */}
         {loading && (
@@ -307,6 +355,7 @@ export default function Dashboard() {
           results={searchResults}
           onIngest={handleIngest}
           onEnrich={handleEnrich}
+          onEnrichNonprofit={handleEnrichNonprofit}
           onClose={() => setSearchOpen(false)}
         />
       </div>
@@ -317,6 +366,18 @@ export default function Dashboard() {
           source={credentialModal}
           onSubmit={handleCredentialSubmit}
           onClose={() => setCredentialModal(null)}
+        />
+      )}
+
+      {/* Manual Entry Modal */}
+      {manualEntryOpen && activeCase && (
+        <ManualEntryModal
+          caseId={activeCase.case_id}
+          onClose={() => setManualEntryOpen(false)}
+          onSuccess={async () => {
+            await loadGraph()
+            flash('Entity added to graph')
+          }}
         />
       )}
     </div>

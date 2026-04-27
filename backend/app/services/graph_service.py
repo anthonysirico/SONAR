@@ -120,6 +120,63 @@ def create_organization(data: dict):
         return result.single()
 
 
+def create_filing990(data: dict):
+    """Create a Filing990 node for IRS 990 tax filing data."""
+    query = """
+    MERGE (f:Filing990 {ein: $ein, tax_period: $tax_period})
+    ON CREATE SET
+        f.node_id = $node_id,
+        f.tax_year = $tax_year,
+        f.form_type = $form_type,
+        f.total_revenue = $total_revenue,
+        f.total_expenses = $total_expenses,
+        f.total_assets = $total_assets,
+        f.total_liabilities = $total_liabilities,
+        f.net_assets = $net_assets,
+        f.officer_compensation_pct = $officer_compensation_pct,
+        f.program_service_revenue = $program_service_revenue,
+        f.contributions_grants = $contributions_grants,
+        f.investment_income = $investment_income,
+        f.government_grants = $government_grants,
+        f.comp_curnt_ofcrs_key = $comp_curnt_ofcrs_key,
+        f.comp_former_ofcrs = $comp_former_ofcrs,
+        f.other_salaries = $other_salaries,
+        f.total_compensation = $total_compensation,
+        f.pdf_url = $pdf_url,
+        f.prominence_score = 0.0
+    ON MATCH SET
+        f.total_revenue = $total_revenue,
+        f.total_expenses = $total_expenses,
+        f.total_assets = $total_assets
+    RETURN f
+    """
+    params = {
+        "node_id": str(uuid4()),
+        "ein": data.get("ein", ""),
+        "tax_period": data.get("tax_period", ""),
+        "tax_year": data.get("tax_year", 0),
+        "form_type": data.get("form_type", ""),
+        "total_revenue": data.get("total_revenue", 0.0),
+        "total_expenses": data.get("total_expenses", 0.0),
+        "total_assets": data.get("total_assets", 0.0),
+        "total_liabilities": data.get("total_liabilities", 0.0),
+        "net_assets": data.get("net_assets", 0.0),
+        "officer_compensation_pct": data.get("officer_compensation_pct", 0.0),
+        "program_service_revenue": data.get("program_service_revenue", 0.0),
+        "contributions_grants": data.get("contributions_grants", 0.0),
+        "investment_income": data.get("investment_income", 0.0),
+        "government_grants": data.get("government_grants", 0.0),
+        "comp_curnt_ofcrs_key": data.get("comp_curnt_ofcrs_key", 0.0),
+        "comp_former_ofcrs": data.get("comp_former_ofcrs", 0.0),
+        "other_salaries": data.get("other_salaries", 0.0),
+        "total_compensation": data.get("total_compensation", 0.0),
+        "pdf_url": data.get("pdf_url", ""),
+    }
+    with db.session() as session:
+        result = session.run(query, params)
+        return result.single()
+
+
 # ─── Edge Creation ───────────────────────────────────────────
 
 def create_awarded_to(org_name: str, company_uei: str, props: dict):
@@ -197,6 +254,91 @@ def create_shares_address_with(company_uei_1: str, company_uei_2: str, props: di
         "source": props.get("source", ["SAM"]),
         "address": props.get("address", ""),
         "shared_attributes": props.get("shared_attributes", []),
+    }
+    with db.session() as session:
+        result = session.run(query, params)
+        return result.single()
+
+
+def create_filed_by(company_uei: str, filing_ein: str, filing_tax_period: str, props: dict):
+    """Create FILED edge from Company → Filing990."""
+    query = """
+    MATCH (c:Company {uei: $uei})
+    MATCH (f:Filing990 {ein: $ein, tax_period: $tax_period})
+    MERGE (c)-[r:FILED]->(f)
+    SET r.source = $source,
+        r.confidence = $confidence
+    RETURN r
+    """
+    params = {
+        "uei": company_uei,
+        "ein": filing_ein,
+        "tax_period": filing_tax_period,
+        "source": props.get("source", ["ProPublica"]),
+        "confidence": props.get("confidence", 0.85),
+    }
+    with db.session() as session:
+        result = session.run(query, params)
+        return result.single()
+
+
+def create_officer_of(individual_name: str, company_uei: str, props: dict):
+    """Create OFFICER_OF edge from Individual → Company (from 990 data)."""
+    query = """
+    MATCH (i:Individual {name: $individual_name})
+    MATCH (c:Company {uei: $company_uei})
+    MERGE (i)-[r:OFFICER_OF]->(c)
+    SET r.weight = $weight,
+        r.confidence = $confidence,
+        r.source = $source,
+        r.title = $title,
+        r.compensation = $compensation
+    RETURN r
+    """
+    params = {
+        "individual_name": individual_name,
+        "company_uei": company_uei,
+        "weight": props.get("weight", 1.0),
+        "confidence": props.get("confidence", 0.85),
+        "source": props.get("source", ["990"]),
+        "title": props.get("title", ""),
+        "compensation": props.get("compensation", 0.0),
+    }
+    with db.session() as session:
+        result = session.run(query, params)
+        return result.single()
+
+
+# ─── Nonprofit Enrichment ────────────────────────────────────
+
+def enrich_company_nonprofit(uei: str, data: dict):
+    """Enrich a Company node with 990 nonprofit data."""
+    query = """
+    MATCH (c:Company {uei: $uei})
+    SET c.ein = $ein,
+        c.nonprofit_status = true,
+        c.total_990_revenue = $total_990_revenue,
+        c.total_990_expenses = $total_990_expenses,
+        c.total_990_assets = $total_990_assets,
+        c.officer_comp_pct = $officer_comp_pct,
+        c.total_officer_compensation = $total_officer_compensation,
+        c.latest_990_year = $latest_990_year,
+        c.ntee_code = $ntee_code,
+        c.subsection_code = $subsection_code,
+        c.nonprofit_enriched = true
+    RETURN c
+    """
+    params = {
+        "uei": uei,
+        "ein": data.get("ein", ""),
+        "total_990_revenue": data.get("latest_revenue", 0),
+        "total_990_expenses": data.get("latest_expenses", 0),
+        "total_990_assets": data.get("latest_assets", 0),
+        "officer_comp_pct": data.get("officer_comp_pct", 0),
+        "total_officer_compensation": data.get("total_officer_compensation", 0),
+        "latest_990_year": data.get("latest_tax_year", 0),
+        "ntee_code": data.get("ntee_code", ""),
+        "subsection_code": data.get("subsection_code", ""),
     }
     with db.session() as session:
         result = session.run(query, params)

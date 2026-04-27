@@ -36,6 +36,9 @@ def compute_all_prominence():
                 max(complaints) as max_complaints
         """).single()
 
+        if max_vals is None:
+            return {"status": "No nodes found — nothing to score"}
+
         max_degree     = max_vals["max_degree"] or 1
         max_dollars    = max_vals["max_dollars"] or 1
         max_complaints = max_vals["max_complaints"] or 1

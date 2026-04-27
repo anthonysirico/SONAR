@@ -18,6 +18,8 @@ import logging
 from app.services import case_service
 from app.services import usaspending
 from app.services import sam_gov
+from app.services import propublica_nonprofit
+from app.services import open_corporates
 from app.services import graph_service
 from app.services import entity_resolution
 from app.services.source_registry import sources_for_search_type
@@ -215,11 +217,67 @@ async def _search_source(source_id: str, query: str, search_type: str,
             "results": summaries,
         }
 
+    elif source_id == "propublica_990":
+        raw = await propublica_nonprofit.search_nonprofits(query)
+        orgs = raw.get("organizations", [])
+        summaries = [propublica_nonprofit.map_search_result_summary(o) for o in orgs[:limit]]
+        total = raw.get("total_results", len(summaries))
+
+        return {
+            "status": "success",
+            "source_name": source_name,
+            "result_count": len(summaries),
+            "total_available": total,
+            "has_next": raw.get("num_pages", 0) > 1,
+            "results": summaries,
+        }
+
+    elif source_id == "open_corporates":
+        api_key = credentials.get("api_key", "")
+        # OpenCorporates has a free tier (no key needed for basic search)
+        try:
+            raw = await open_corporates.search_companies(query, api_key=api_key or None, limit=limit)
+            companies = raw.get("results", {}).get("companies", [])
+            summaries = [_map_opencorp_summary(c.get("company", {})) for c in companies]
+            total = raw.get("results", {}).get("total_count", len(summaries))
+
+            return {
+                "status": "success",
+                "source_name": source_name,
+                "result_count": len(summaries),
+                "total_available": total,
+                "has_next": False,
+                "results": summaries,
+            }
+        except Exception as e:
+            return {
+                "status": "error",
+                "error": str(e),
+                "source_name": source_name,
+                "results": [],
+            }
+
     return {
         "status": "error",
         "error": f"Unknown source: {source_id}",
         "source_name": source_name,
         "results": [],
+    }
+
+
+def _map_opencorp_summary(company: dict) -> dict:
+    """Map OpenCorporates company to a lightweight summary."""
+    return {
+        "name": company.get("name", ""),
+        "company_number": company.get("company_number", ""),
+        "jurisdiction_code": company.get("jurisdiction_code", ""),
+        "incorporation_date": company.get("incorporation_date", ""),
+        "company_type": company.get("company_type", ""),
+        "registry_url": company.get("registry_url", ""),
+        "current_status": company.get("current_status", ""),
+        "registered_address": company.get("registered_address_in_full", ""),
+        "opencorporates_url": company.get("opencorporates_url", ""),
+        "source": "open_corporates",
     }
 
 
@@ -268,6 +326,71 @@ async def enrich_company(case_id: str, body: EnrichRequest):
     except Exception as e:
         logger.error(f"SAM.gov enrichment failed for UEI {body.uei}: {e}")
         raise HTTPException(502, f"SAM.gov enrichment error: {str(e)}")
+
+
+# ─── Nonprofit Enrichment (ProPublica 990 → Company node) ─────
+
+class NonprofitEnrichRequest(BaseModel):
+    """Enrich a Company node with IRS 990 data from ProPublica."""
+    ein: str = Field(..., min_length=1, description="EIN of the nonprofit (no dashes)")
+    uei: str = Field(default="", description="UEI of the company to associate 990 data with")
+
+@router.post("/{case_id}/enrich-nonprofit")
+async def enrich_nonprofit(case_id: str, body: NonprofitEnrichRequest):
+    """
+    Fetch full 990 filing data from ProPublica and enrich
+    the Company node with nonprofit financial data.
+    """
+    case = case_service.get_case(case_id)
+    if not case:
+        raise HTTPException(404, "Case not found")
+
+    try:
+        org_data = await propublica_nonprofit.get_organization(body.ein)
+        if not org_data or not org_data.get("organization"):
+            raise HTTPException(404, f"No ProPublica data found for EIN: {body.ein}")
+
+        summary = propublica_nonprofit.map_org_to_nonprofit_summary(org_data)
+        filings = org_data.get("filings_with_data", [])
+
+        # If UEI provided, enrich the Company node
+        if body.uei:
+            # Calculate total officer comp from latest filing
+            latest_filing = filings[0] if filings else {}
+            summary["total_officer_compensation"] = (
+                (latest_filing.get("compnsatncurrofcr", 0) or 0) +
+                (latest_filing.get("compnsatnandothr", 0) or 0)
+            )
+            graph_service.enrich_company_nonprofit(body.uei, summary)
+
+            # Create Filing990 nodes for the most recent filings (up to 3)
+            for filing_raw in filings[:3]:
+                filing_data = propublica_nonprofit.map_filing_to_990(
+                    filing_raw, org_data.get("organization", {})
+                )
+                filing_record = graph_service.create_filing990(filing_data)
+                if filing_record:
+                    node = filing_record["f"]
+                    case_service.link_node_to_case(node.get("node_id"), case_id)
+                    # Link Company → Filing990
+                    graph_service.create_filed_by(
+                        body.uei,
+                        filing_data["ein"],
+                        filing_data["tax_period"],
+                        {"source": ["ProPublica"], "confidence": 0.90}
+                    )
+
+        return {
+            "status": "enriched",
+            "ein": body.ein,
+            "nonprofit": summary,
+            "filing_count": len(filings),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"ProPublica enrichment failed for EIN {body.ein}: {e}")
+        raise HTTPException(502, f"ProPublica enrichment error: {str(e)}")
 
 
 # ─── Ingest (write to graph) ────────────────────────────────

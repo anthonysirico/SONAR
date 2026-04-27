@@ -7,6 +7,7 @@ discovered during searches and analysis.
 from app.database import db
 from uuid import uuid4
 from datetime import datetime, timezone
+from typing import Optional
 
 
 def create_case(name: str, description: str = "") -> dict:
@@ -55,7 +56,7 @@ def get_case(case_id: str) -> dict:
         return case
 
 
-def list_cases(status: str = None) -> list:
+def list_cases(status: Optional[str] = None) -> list:
     """List all cases, optionally filtered by status."""
     if status:
         query = """
@@ -123,9 +124,9 @@ def get_case_graph(case_id: str) -> list:
     """Get all nodes and their relationships within a case."""
     query = """
     MATCH (n)-[:PART_OF_CASE]->(c:Case {case_id: $case_id})
-    OPTIONAL MATCH (n)-[r]-(m)
-    WHERE (m)-[:PART_OF_CASE]->(c)
-    RETURN n, r, m
+    OPTIONAL MATCH (n)-[r]->(m)
+    WHERE (m)-[:PART_OF_CASE]->(c) AND type(r) <> 'PART_OF_CASE'
+    RETURN n, r, m, type(r) AS rel_type, id(r) AS rel_id
     """
     with db.session() as session:
         result = session.run(query, {"case_id": case_id})

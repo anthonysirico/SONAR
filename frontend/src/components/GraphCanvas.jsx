@@ -146,7 +146,7 @@ const stylesheet = [
 
 const LAYOUT_OPTIONS = { name: 'cose', animate: true, padding: 40, fit: true }
 
-export default function GraphCanvas({ elements }) {
+export default function GraphCanvas({ elements, caseId, onRefresh }) {
   const cyRef = useRef(null)
   const [selectedNode, setSelectedNode] = useState(null)
 
@@ -197,7 +197,9 @@ export default function GraphCanvas({ elements }) {
       />
       <NodeDetail
         node={selectedNode}
+        caseId={caseId}
         onClose={() => setSelectedNode(null)}
+        onRefresh={onRefresh}
       />
     </div>
   )
